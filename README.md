@@ -45,6 +45,67 @@ python data_process.py
 [BOS]标题:xxx 作者:xxx[SEP]正文...[EOS]
 ```
 
+## 模型训练
+
+运行训练脚本：
+
+```bash
+python train.py
+```
+
+当前训练脚本支持以下能力：
+
+- 终端实时显示 `loss` / `avg_loss` / `step`
+- 默认实时刷新 loss 曲线图
+- 每个 epoch 自动保存 `last.pt` 和 `best.pt`
+- 支持中断后继续训练
+
+训练产物默认保存在 `checkpoints/` 目录下，包括：
+
+- `last.pt`：最近一次训练检查点
+- `best.pt`：当前最佳检查点
+- `loss_curve.png`：loss 曲线图
+- `loss_history.json`：每个 epoch 的平均 loss 记录
+- `vocab.json` / `config.json` / `train_args.json`
+
+### 断点续训
+
+默认会自动尝试从 `checkpoints/last.pt` 恢复训练。
+
+```bash
+python train.py
+```
+
+如果你想显式指定某个检查点：
+
+```bash
+python train.py --resume-from checkpoints/last.pt
+```
+
+如果你想忽略已有检查点，从头开始训练：
+
+```bash
+python train.py --no-resume
+```
+
+训练过程中按 `Ctrl + C`，脚本会先保存当前可续训状态，再退出。
+
+### 实时可视化
+
+默认会尝试弹出实时 loss 图窗口。
+
+如果当前环境不支持图形界面，则会自动退回为只更新：
+
+```text
+checkpoints/loss_curve.png
+```
+
+如果你不想弹出实时图窗口，可以关闭：
+
+```bash
+python train.py --no-live-plot
+```
+
 ## 模型说明
 
 `mini-llm.py` 当前实现了一个教学版 Causal LM：

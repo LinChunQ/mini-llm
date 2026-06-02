@@ -91,6 +91,6 @@ def _merge_paragraphs(paragraphs) -> str:
 # prepare_poetry_train_data("./tang_repo", "poetry_train.txt")
 if __name__ == "__main__":
     input_dir = "./全唐诗"
-    output_path = "poetry_train.txt"
+    output_path = "dataset/poetry_train.txt"
     total, written, failed = prepare_poetry_train_data(input_dir, output_path)
     print(f"处理完成: 扫描诗词 {total} 首，写入 {written} 首，跳过异常分片 {failed} 个。输出文件: {output_path}")

@@ -9,6 +9,7 @@ import json
 import random
 import re
 from collections import Counter
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
@@ -309,7 +310,8 @@ def save_checkpoint(
 
 def load_checkpoint(path):
     """从磁盘加载训练检查点。"""
-    return torch.load(path, map_location="cpu")
+    # 这里的 checkpoint 包含优化器状态和训练参数，必须显式保持完整反序列化。
+    return torch.load(path, map_location="cpu", weights_only=False)
 
 
 def apply_config_overrides(config, config_dict):
@@ -336,6 +338,7 @@ def main():
     parser.add_argument("--output-dir", default="checkpoints")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--max-seq-len", type=int, default=256)
@@ -347,6 +350,9 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.set_defaults(amp=None)
+    parser.add_argument("--amp", dest="amp", action="store_true")
+    parser.add_argument("--no-amp", dest="amp", action="store_false")
     parser.set_defaults(resume=True)
     parser.add_argument("--resume", dest="resume", action="store_true")
     parser.add_argument("--no-resume", dest="resume", action="store_false")
@@ -355,6 +361,8 @@ def main():
     parser.add_argument("--live-plot", dest="live_plot", action="store_true")
     parser.add_argument("--no-live-plot", dest="live_plot", action="store_false")
     args = parser.parse_args()
+    if args.grad_accum_steps < 1:
+        raise ValueError("grad_accum_steps must be at least 1")
 
     # 固定随机性，方便复现实验结果。
     seed_everything(args.seed)
@@ -364,6 +372,14 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
+
+    # CUDA 默认启用混合精度，显著降低激活值和梯度的显存占用。
+    use_amp = bool(device.type == "cuda") if args.amp is None else bool(args.amp)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp and device.type == "cuda")
+    print(
+        f"training setup: device={device} batch_size={args.batch_size} "
+        f"grad_accum_steps={args.grad_accum_steps} amp={scaler.is_enabled()}"
+    )
 
     output_dir = Path(args.output_dir)
     resume_path = resolve_resume_path(args, output_dir)
@@ -450,6 +466,15 @@ def main():
             f"resume state: epoch={last_epoch} step={global_step} "
             f"epoch_complete={epoch_complete}"
         )
+        if "args" in checkpoint:
+            ckpt_args = checkpoint["args"]
+            print(
+                "checkpoint args: "
+                f"batch_size={ckpt_args.get('batch_size')} "
+                f"max_seq_len={ckpt_args.get('max_seq_len')} "
+                f"hidden_size={ckpt_args.get('hidden_size')} "
+                f"num_layers={ckpt_args.get('num_layers')}"
+            )
 
     loss_plotter = LossPlotter(output_dir, enable_live_plot=args.live_plot)
     num_batches = len(loader)
@@ -485,6 +510,7 @@ def main():
             live_loss_x = []
             live_loss_y = []
             progress_bar = make_progress_bar(loader, epoch, args.epochs, num_batches)
+            optimizer.zero_grad(set_to_none=True)
 
             for batch_idx, batch in enumerate(progress_bar, start=1):
                 # 把一个 batch 的张量搬到目标设备上。
@@ -492,21 +518,43 @@ def main():
                 labels = batch["labels"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
 
-                # 标准训练步骤：清梯度 -> 前向 -> 反向 -> 更新参数。
-                optimizer.zero_grad(set_to_none=True)
-                outputs = model(
-                    input_ids=input_ids,
-                    labels=labels,
-                    attention_mask=attention_mask,
-                )
+                # 标准训练步骤：前向 -> 反向 -> 按梯度累积步数更新参数。
+                autocast_context = nullcontext()
+                if device.type == "cuda":
+                    autocast_context = torch.cuda.amp.autocast(enabled=use_amp)
+
+                with autocast_context:
+                    outputs = model(
+                        input_ids=input_ids,
+                        labels=labels,
+                        attention_mask=attention_mask,
+                    )
                 loss = outputs["loss"]
-                loss.backward()
+                scaled_loss = loss / args.grad_accum_steps
 
-                # 梯度裁剪用于降低梯度爆炸风险。
-                if args.grad_clip is not None and args.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                if scaler.is_enabled():
+                    scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
 
-                optimizer.step()
+                should_step = (
+                    batch_idx % args.grad_accum_steps == 0 or batch_idx == num_batches
+                )
+
+                if should_step:
+                    # 梯度裁剪用于降低梯度爆炸风险。
+                    if args.grad_clip is not None and args.grad_clip > 0:
+                        if scaler.is_enabled():
+                            scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
+                    if scaler.is_enabled():
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+
+                    optimizer.zero_grad(set_to_none=True)
 
                 total_loss += loss.item()
                 total_steps += 1

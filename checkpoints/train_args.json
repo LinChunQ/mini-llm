@@ -2,7 +2,8 @@
   "data": "dataset/poetry_train.txt",
   "output_dir": "checkpoints",
   "epochs": 3,
-  "batch_size": 16,
+  "batch_size": 4,
+  "grad_accum_steps": 4,
   "lr": 0.0003,
   "weight_decay": 0.01,
   "max_seq_len": 256,
@@ -14,7 +15,8 @@
   "device": "auto",
   "log_every": 50,
   "grad_clip": 1.0,
+  "amp": null,
   "resume": true,
   "resume_from": null,
-  "live_plot": true
+  "live_plot": false
 }

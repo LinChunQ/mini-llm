@@ -64,8 +64,10 @@ def run_interactive_loop(args):
     print(f"模型: {checkpoint_path}")
     print(f"设备: {device}")
     print()
+    print("⚠️  注意: 此模型使用繁体字训练，请输入繁体字以获得最佳效果")
+    print()
     print("提示：")
-    print("  - 输入格式: 标题:春晓 作者:孟浩然 正文:春眠不觉晓")
+    print("  - 输入格式: 标题:春曉 作者:孟浩然 正文:春眠不覺曉")
     print("  - 支持中英文冒号（: 或 ：）")
     print("  - 或直接输入任意文本")
     print("  - 输入 /quit 或按 Ctrl+C 退出")
@@ -99,8 +101,13 @@ def run_interactive_loop(args):
                 content = content_match.group(1).strip() if content_match else ""
 
                 if title and author:
-                    prompt = f"标题:{title} 作者:{author}[SEP]{content}"
-                    print(f"[解析] 标题={title} | 作者={author} | 正文={content}")
+                    if content:
+                        prompt = f"标题:{title} 作者:{author}[SEP]{content}"
+                        print(f"[解析] 引导生成 -> 标题={title} | 作者={author} | 引导句={content}")
+                    else:
+                        # 如果用户只输了“标题:春晓 作者:孟浩然”，让模型自由发挥写全诗
+                        prompt = f"标题:{title} 作者:{author}[SEP]"
+                        print(f"[解析] 自由生成 -> 标题={title} | 作者={author}")
                 else:
                     prompt = user_input
             except Exception as e:

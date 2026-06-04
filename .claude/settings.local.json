@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/d/Learning/code/**)",
+      "Bash(head -5 poetry.txt)",
+      "Read(//data/test/**)",
+      "Bash(python *)"
+    ]
+  }
+}
